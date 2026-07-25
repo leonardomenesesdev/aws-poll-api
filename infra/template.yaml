@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Poll/Voting REST API - Lambda + API Gateway (HTTP API) + DynamoDB.
+  Desafio AWS Iniciante.
+
+Parameters:
+  LambdaCodeS3Bucket:
+    Type: String
+    Description: Nome do bucket S3 onde o lambda.zip foi enviado manualmente.
+  LambdaCodeS3Key:
+    Type: String
+    Default: lambda.zip
+    Description: Caminho/nome do objeto .zip dentro do bucket.
+
+Resources:
+  PollsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Polls
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: poll_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: poll_id
+          KeyType: HASH
+
+  PollApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: poll-api-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PollsTableAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource: !GetAtt PollsTable.Arn
+
+  PollApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: poll-api
+      Runtime: python3.12
+      Handler: app.lambda_handler.handler
+      Role: !GetAtt PollApiLambdaRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+
+  PollApiHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: poll-api-http
+      ProtocolType: HTTP
+
+  PollApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref PollApiHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PollApiFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  PollApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref PollApiHttpApi
+      RouteKey: 'ANY /{proxy+}'
+      Target: !Sub 'integrations/${PollApiIntegration}'
+
+  PollApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref PollApiHttpApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  PollApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PollApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PollApiHttpApi}/*/*'
+
+Outputs:
+  ApiUrl:
+    Description: URL publica da API (Invoke URL)
+    Value: !Sub 'https://${PollApiHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  TableName:
+    Description: Nome da tabela DynamoDB criada
+    Value: !Ref PollsTable
