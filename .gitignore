@@ -9,3 +9,6 @@ dist/
 build/
 .idea/
 .vscode/
+
+# Guia pessoal de estudo — não faz parte do entregável
+AWS_GUIA_PASSO_A_PASSO.md
